@@ -5,13 +5,15 @@ HOST = "127.0.0.1"  # loopback
 PORT = 4444
 BUFFER_SIZE = 1024
 
-def handle_client(client_socket):
+def handle_client(client_socket, addr):
     with client_socket:
         while True:
             try:
                 data = client_socket.recv(BUFFER_SIZE)
                 if not data:
                     break
+
+                print(f"{addr}: {data}")
 
                 response_data = data
                 client_socket.sendall(response_data)
@@ -31,7 +33,7 @@ def main():
             client_socket, addr = s.accept()
             print(f"[SERVER] Connection from {addr}")
 
-            threading.Thread(target=handle_client, args=(client_socket,)).start()
+            threading.Thread(target=handle_client, args=(client_socket, addr)).start()
 
 if __name__ == "__main__":
     main()
