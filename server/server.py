@@ -87,10 +87,27 @@ async def process_command(websocket, username, cmd, args):
         return {"type": "response", "text": state.create_group(args[0])}
 
     elif cmd == "delete_group":
-        return {"type": "response", "text": state.delete_group(args[0])}
+        # kick everyone out first
+        members = list(state.groups.get(args[0], set()))
+        result = state.delete_group(args[0])
+
+        # notify members
+        for member in members:
+            if member in state.clients:
+                await state.clients[member].send(json.dumps({
+                    "type": "kicked_from_group",
+                    "group": args[0],
+                    "text": f"Group '{args[0]}' was deleted"
+                }))
+
+        return {"type": "response", "text": result}
 
     elif cmd == "join_group":
-        state.join_group(username, args[0])
+        result = state.join_group(username, args[0])
+
+        if result == "Group not found":
+            return {"type": "error", "text": result}
+
         history = state.get_history(args[0])
         return {"type": "history", "group": args[0], "messages": history}
 
@@ -113,15 +130,6 @@ async def handle_client(websocket):
 
     username = None
 
-    # the client sends JSONs like:
-    '''
-    {
-        "type": "message",
-        "group": state.current_group,
-        "username": state.username,
-        "text": message
-    }
-    '''
     try:
         async for raw in websocket:
             data = json.loads(raw)
@@ -156,7 +164,8 @@ async def handle_client(websocket):
                             "username": username,
                             "text": text
                         }))
-
+    except Exception as e:
+        print(f"[SERVER] error: {str(e)}")
 
     finally:
         if username:

@@ -13,8 +13,6 @@ HOST = "127.0.0.1"
 PORT = 4444
 BUFFER_SIZE = 1024
 
-session = PromptSession()
-
 class ClientState:
     def __init__(self):
         self.username: str = ""
@@ -34,11 +32,9 @@ async def process_command(websocket, text):
     args = parts[1:]
 
     if cmd == "join" and args:
-        state.switch_group(args[0])
         await websocket.send(json.dumps({"type": "cmd", "cmd": "join_group", "args": args}))
 
     elif cmd == "switch" and args:
-        state.switch_group(args[0])
         os.system('cls')
         await websocket.send(json.dumps({"type": "cmd", "cmd": "join_group", "args": args}))
 
@@ -70,13 +66,20 @@ async def receive_loop(websocket):
             print(f"{data['group']}>{data['username']}: {data['text']}")
 
         elif data["type"] == "history":
+            # only switch group on successful join
+            state.switch_group(data["group"])
             for msg in data["messages"]:
                 print(f"{data['group']}>{msg['username']}: {msg['text']}")
 
         elif data["type"] in ("response", "error"):
             print(f"[{data['type'].upper()}] {data['text']}")
 
-async def input_loop(websocket):
+        elif data["type"] == "kicked_from_group":
+            print(f"[{data['type'].upper()}] {data['text']}")
+            if state.current_group == data["group"]:
+                state.switch_group("")
+
+async def input_loop(websocket, session):
 
     while True:
         message = await session.prompt_async(f"{state.current_group}>{state.username}> ")
@@ -116,9 +119,10 @@ async def main():
         await websocket.send(json.dumps({"type": "register", "username":username}))
 
         with patch_stdout():    # for syncing received messages with text thats being written
+            session = PromptSession()
             await asyncio.gather(
                 receive_loop(websocket),
-                input_loop(websocket),
+                input_loop(websocket, session),
             )
 
 if __name__ == "__main__":
