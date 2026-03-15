@@ -153,6 +153,13 @@ async def handle_client(websocket):
                 group = data["group"]
                 text = data["text"]
 
+                if group not in state.groups:
+                    await websocket.send(json.dumps({
+                        "type": "error",
+                        "text": f"Group '{group}' no longer exists!"
+                    }))
+                    continue
+
                 state.add_message(group, username, text)
 
                 # broadcast to everyone, except the sender
@@ -166,6 +173,10 @@ async def handle_client(websocket):
                         }))
     except Exception as e:
         print(f"[SERVER] error: {str(e)}")
+        websocket.send(json.dumps({
+            "type": "error",
+            "text": f"Server error: {str(e)}"
+        }))
 
     finally:
         if username:

@@ -82,7 +82,13 @@ async def receive_loop(websocket):
 async def input_loop(websocket, session):
 
     while True:
-        message = await session.prompt_async(f"{state.current_group}>{state.username}> ")
+        # problem: prompt_async gets the current_group before /leave or /join work
+        # message = await session.prompt_async(f"{state.current_group}>{state.username}> ")
+
+        # solution: lambda re-evaluates state.current_group every render
+        message = await session.prompt_async(
+            lambda: f"{state.current_group}>{state.username}> "
+        )
 
         # skip loop if message is empty
         if not message.strip():
