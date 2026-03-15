@@ -67,7 +67,7 @@ async def receive_loop(websocket):
         data = json.loads(raw)
 
         if data["type"] == "message":
-            print(f"\n{data['group']}>{data['username']}: {data['text']}")
+            print(f"{data['group']}>{data['username']}: {data['text']}")
 
         elif data["type"] == "history":
             for msg in data["messages"]:
@@ -79,7 +79,7 @@ async def receive_loop(websocket):
 async def input_loop(websocket):
 
     while True:
-        message = await session.prompt_async(f"{state.username}@{state.current_group}> ")
+        message = await session.prompt_async(f"{state.current_group}>{state.username}> ")
 
         # skip loop if message is empty
         if not message.strip():
