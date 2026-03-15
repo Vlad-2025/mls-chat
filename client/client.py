@@ -1,40 +1,42 @@
-import socket
+import websockets as ws
+import sys
+import asyncio
+from prompt_toolkit import PromptSession
+from prompt_toolkit.patch_stdout import patch_stdout
 
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 HOST = "127.0.0.1"
 PORT = 4444
 BUFFER_SIZE = 1024
 
-def receive_message(server_socket):
+session = PromptSession()
 
-    try:
-        data = server_socket.recv(BUFFER_SIZE)
-        if not data:
-            return None;
+async def receive_loop(websocket):
 
-        data_str = data.decode("utf-8")
+    async for message in websocket:
+        print(f"Server response: {message}")
 
-        return data_str
+async def input_loop(websocket):
 
-    except Exception as e:
-        return f"Error: {str(e)}"
+    while True:
+        message = await session.prompt_async("client> ")
+        message = message.strip()
 
-def main():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if message == "exit":
+            await websocket.close()
+            break
 
-        s.connect((HOST, PORT))
+        await websocket.send(message)
 
-        while True:
-            message = input('client> ').strip()
-
-            if message == "exit":
-                break
-
-            s.sendall(message.encode("utf-8"))
-
-            response = receive_message(s)
-
-            print(f"Server response: {response}")
+async def main():
+    async with ws.connect(f"ws://{HOST}:{PORT}") as websocket:
+        with patch_stdout():
+            await asyncio.gather(
+                receive_loop(websocket),
+                input_loop(websocket),
+            )
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

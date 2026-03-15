@@ -1,39 +1,31 @@
-import socket
-import threading
+import websockets as ws
+import sys
+import asyncio
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 HOST = "127.0.0.1"  # loopback
 PORT = 4444
 BUFFER_SIZE = 1024
 
-def handle_client(client_socket, addr):
-    with client_socket:
-        while True:
-            try:
-                data = client_socket.recv(BUFFER_SIZE)
-                if not data:
-                    break
+async def handle_client(websocket):
 
-                print(f"{addr}: {data}")
+    addr = websocket.remote_address
 
-                response_data = data
-                client_socket.sendall(response_data)
+    print(f"[SERVER] Connection from {addr}")
 
-            except Exception as e:
-                client_socket.sendall(f"Error: {str(e)}".encode("utf-8"))
-                break
+    async for message in websocket:
+        print(f"{addr}: {message}")
 
-def main():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        await websocket.send(message)   # echo
 
-        s.bind((HOST, PORT))
+async def main():
 
-        s.listen()
+    async with ws.serve(handle_client, HOST, PORT):
+        print(f"[SERVER] Listening on {HOST}:{PORT}")
 
-        while True:
-            client_socket, addr = s.accept()
-            print(f"[SERVER] Connection from {addr}")
-
-            threading.Thread(target=handle_client, args=(client_socket, addr)).start()
+        await asyncio.Future()  # Run forever
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
