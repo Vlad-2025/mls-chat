@@ -1,6 +1,4 @@
 import json
-from http.client import responses
-
 import websockets as ws
 import sys
 import asyncio
@@ -24,6 +22,9 @@ class ServerState:
         # group_name -> list of {"username": str, "text": str}
         self.history: dict[str, list] = {}
 
+        # group_name -> set of usernames waiting to accept invite
+        self.pending: dict[str, set[str]] = {}
+
     def register_client(self, username, websocket):
         self.clients[username] = websocket
 
@@ -39,6 +40,7 @@ class ServerState:
 
         self.groups[group_name] = set()
         self.history[group_name] = []
+        self.pending[group_name] = set()
 
         return f"Group '{group_name}' created"
 
@@ -48,6 +50,7 @@ class ServerState:
 
         del self.groups[group_name]
         del self.history[group_name]
+        del self.pending[group_name]
 
         return f"Group '{group_name}' deleted"
 
@@ -79,11 +82,57 @@ class ServerState:
     def list_groups(self):
         return list(self.groups.keys())
 
+    # inviting users
+
+    def invite_user(self, inviter, username, group_name):
+        if group_name not in self.groups:
+            return "Group not found"
+
+        if inviter not in self.groups[group_name]:
+            return "You are not a member of this group"
+
+        if username not in self.clients:
+            return "User not online"
+
+        if username in self.groups[group_name]:
+            return "User is already in the group"
+
+        self.pending[group_name].add(username)
+
+        return f"Invited '{username}' to '{group_name}'"
+
+    def accept_invite(self, username, group_name):
+        if group_name not in self.groups:
+            return "Group not found"
+
+        if username not in self.pending.get(group_name, set()):
+            return "No pending invite for this group"
+
+        self.pending[group_name].discard(username)
+        self.groups[group_name].add(username)
+
+        return f"Joined '{group_name}'"
+
+    def get_pending(self, username, group_name):
+        if group_name not in self.groups:
+            return "Group not found"
+
+        if username not in self.groups[group_name]:
+            return "You are not part of this group"
+
+        return list(self.pending.get(group_name, set()))
 
 state = ServerState()
 
 async def process_command(websocket, username, cmd, args):
     if cmd == "create_group":
+        result = state.create_group(args[0])
+        if result.startswith("Group '"):
+            state.join_group(username, args[0])
+            history = state.get_history(args[0])
+
+            return {"type": "history", "group": args[0], "messages": history}
+
         return {"type": "response", "text": state.create_group(args[0])}
 
     elif cmd == "delete_group":
@@ -111,6 +160,59 @@ async def process_command(websocket, username, cmd, args):
         history = state.get_history(args[0])
         return {"type": "history", "group": args[0], "messages": history}
 
+    elif cmd == "invite_user":
+
+        invitee = args[1] if len(args) > 1 else None
+        group = args[0] if args else None
+
+        if not group or not invitee:
+            return {"type": "error", "text": "Usage: /invite <user> (while in a group)"}
+
+        result = state.invite_user(username, invitee, group)
+        if result.startswith("Invited"):
+            # notify the person being invited
+            if invitee in state.clients:
+                await state.clients[invitee].send(json.dumps({
+                    "type": "invite",
+                    "group": group,
+                    "from": username,
+                    "text": f"'{username}' invited you to join '{group}'. Do /accept <group> to become a member"
+                }))
+        return {"type": "response", "text": result}
+
+    elif cmd == "accept_invite":
+
+        group = args[0] if args else None
+        if not group:
+            return {"type": "error", "text": "Usage: /accept <group>"}
+
+        result = state.accept_invite(username, group)
+        if result.startswith("Joined"):
+            # notify members
+            for member in state.groups[group]:
+                if member != username and member in state.clients:
+                    await state.clients[member].send(json.dumps({
+                        "type": "response",
+                        "text": f"'{username}' joined '{group}'"
+                    }))
+            history = state.get_history(group)
+            return {"type": "history", "group": group, "messages": history}
+
+        return {"type": "error", "text": result}
+
+    elif cmd == "get_pending":
+
+        group = args[0] if args else None
+        if not group:
+            return {"type": "error", "text": "Usage: /pending (while in a group)"}
+
+        result = state.get_pending(username, group)
+        if isinstance(result, str):
+            return {"type": "error", "text": result}
+
+        return {"type": "response", "text": f"Pending: {result}" if result else "No pending invites"}
+
+
     elif cmd == "leave_group":
         return {"type": "response", "text": state.leave_group(username, args[0])}
 
@@ -132,51 +234,53 @@ async def handle_client(websocket):
 
     try:
         async for raw in websocket:
-            data = json.loads(raw)
-            msg_type = data.get("type")
+            try:
+                data = json.loads(raw)
+                msg_type = data.get("type")
 
-            if msg_type == "register":
-                username = data["username"]
-                state.register_client(username, websocket)
-                print(f"[SERVER] '{username}' registered from {addr}")
+                if msg_type == "register":
+                    username = data["username"]
+                    state.register_client(username, websocket)
+                    print(f"[SERVER] '{username}' registered from {addr}")
 
-                await websocket.send(json.dumps({"type": "response", "text": f"Welcome, {username}!"}))
+                    await websocket.send(json.dumps({"type": "response", "text": f"Welcome, {username}!"}))
 
-            elif msg_type == "cmd":
-                if not username:
-                    await websocket.send(json.dumps({"type":"error", "text":"Not registered!"}))
-                    continue
-                response = await process_command(websocket, username, data["cmd"], data.get("args", []))
-                await websocket.send(json.dumps(response))
+                elif msg_type == "cmd":
+                    if not username:
+                        await websocket.send(json.dumps({"type":"error", "text":"Not registered!"}))
+                        continue
+                    response = await process_command(websocket, username, data["cmd"], data.get("args", []))
+                    await websocket.send(json.dumps(response))
 
-            elif msg_type == "message":
-                group = data["group"]
-                text = data["text"]
+                elif msg_type == "message":
+                    group = data["group"]
+                    text = data["text"]
 
-                if group not in state.groups:
-                    await websocket.send(json.dumps({
-                        "type": "error",
-                        "text": f"Group '{group}' no longer exists!"
-                    }))
-                    continue
-
-                state.add_message(group, username, text)
-
-                # broadcast to everyone, except the sender
-                for member in state.groups.get(group, set()):
-                    if member != username and member in state.clients:
-                        await state.clients[member].send(json.dumps({
-                            "type": "message",
-                            "group": group,
-                            "username": username,
-                            "text": text
+                    if group not in state.groups:
+                        await websocket.send(json.dumps({
+                            "type": "error",
+                            "text": f"Group '{group}' no longer exists!"
                         }))
-    except Exception as e:
-        print(f"[SERVER] error: {str(e)}")
-        websocket.send(json.dumps({
-            "type": "error",
-            "text": f"Server error: {str(e)}"
-        }))
+                        continue
+
+                    state.add_message(group, username, text)
+
+                    # broadcast to everyone, except the sender
+                    for member in state.groups.get(group, set()):
+                        if member != username and member in state.clients:
+                            await state.clients[member].send(json.dumps({
+                                "type": "message",
+                                "group": group,
+                                "username": username,
+                                "text": text
+                            }))
+
+            except Exception as e:
+                print(f"[SERVER] error: {str(e)}")
+                await websocket.send(json.dumps({
+                    "type": "error",
+                    "text": f"Server error: {str(e)}"
+                }))
 
     finally:
         if username:

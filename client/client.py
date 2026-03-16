@@ -31,10 +31,15 @@ async def process_command(websocket, text):
     cmd = parts[0]
     args = parts[1:]
 
+    '''
+    DEPRECATED
+    
     if cmd == "join" and args:
-        await websocket.send(json.dumps({"type": "cmd", "cmd": "join_group", "args": args}))
+    await websocket.send(json.dumps({"type": "cmd", "cmd": "join_group", "args": args}))
 
-    elif cmd == "switch" and args:
+    '''
+
+    if cmd == "switch" and args:
         os.system('cls')
         await websocket.send(json.dumps({"type": "cmd", "cmd": "join_group", "args": args}))
 
@@ -53,6 +58,35 @@ async def process_command(websocket, text):
 
     elif cmd == "members":
         await websocket.send(json.dumps({"type": "cmd", "cmd": "get_members", "args": [state.current_group]}))
+
+    elif cmd == "invite" and args:
+        if not state.current_group:
+            print("You are not currently in a group")
+            return
+
+        await websocket.send(json.dumps({
+            "type": "cmd",
+            "cmd": "invite_user",
+            "args": [state.current_group, args[0]]
+        }))
+
+    elif cmd == "accept" and args:
+        await websocket.send(json.dumps({
+            "type": "cmd",
+            "cmd": "accept_invite",
+            "args": [args[0]]
+        }))
+
+    elif cmd == "pending":
+        if not state.current_group:
+            print("You are not currently in a group")
+            return
+
+        await websocket.send(json.dumps({
+            "type": "cmd",
+            "cmd": "get_pending",
+            "args": [state.current_group]
+        }))
 
     else:
         print(f"Unknown command: {cmd}")
@@ -78,6 +112,9 @@ async def receive_loop(websocket):
             print(f"[{data['type'].upper()}] {data['text']}")
             if state.current_group == data["group"]:
                 state.switch_group("")
+
+        elif data["type"] == "invite":
+            print(f"[INVITE] {data['text']}")
 
 async def input_loop(websocket, session):
 
