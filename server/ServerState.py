@@ -13,8 +13,16 @@ class ServerState:
         # group_name -> set of usernames waiting to accept invite
         self.pending: dict[str, set[str]] = {}
 
-    def register_client(self, username, websocket):
+        # username -> {"x_pub": str, "ed_pub": str}
+        self.key_packages: dict[str, dict] = {}
+
+    def register_client(self, username, websocket, x25519_pub, ed25519_pub):
         self.clients[username] = websocket
+
+        self.key_packages[username] = {
+            "x25519_pub": x25519_pub,
+            "ed25519_pub": ed25519_pub
+        }
 
     def unregister_client(self, username):
         self.clients.pop(username, None)

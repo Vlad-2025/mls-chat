@@ -83,8 +83,9 @@ async def process_command(websocket, username, cmd, args):
             for member in state.groups[group]:
                 if member != username and member in state.clients:
                     await state.clients[member].send(json.dumps({
-                        "type": "response",
-                        "text": f"'{username}' joined '{group}'"
+                        "type": "user_joined",
+                        "username": username,
+                        "group": group
                     }))
             history = state.get_history(group)
             return {"type": "history", "group": group, "messages": history}
@@ -111,7 +112,25 @@ async def process_command(websocket, username, cmd, args):
         return {"type": "response", "text": str(state.list_groups())}
 
     elif cmd == "get_members":
-        return {"type": "response", "text": str(state.get_members(websocket, args[0]))}
+        members = state.get_members(websocket, args[0])
+        return {
+            "type": "members",
+            "group": args[0],
+            "members": members
+        }
+
+    elif cmd == "get_key_package":
+        target = args[0] if args else None
+        if not target or target not in state.key_packages:
+            return {
+                "type": "error",
+                "text": "User not found"
+            }
+        return {
+            "type": "key_package",
+            "username": target,
+            **state.key_packages[target]    # dictionary unpacking
+        }
 
     return {"type": "error", "text": "Unknown command"}
 
@@ -131,7 +150,9 @@ async def handle_client(websocket):
 
                 if msg_type == "register":
                     username = data["username"]
-                    state.register_client(username, websocket)
+                    x25519_pub = data["x25519_pub"]
+                    ed25519_pub = data["ed25519_pub"]
+                    state.register_client(username, websocket, x25519_pub, ed25519_pub)
                     print(f"[SERVER] '{username}' registered from {addr}")
 
                     await websocket.send(json.dumps({"type": "response", "text": f"Welcome, {username}!"}))
@@ -145,7 +166,9 @@ async def handle_client(websocket):
 
                 elif msg_type == "message":
                     group = data["group"]
-                    text = data["text"]
+                    ciphertext = data.get("ciphertext", "")
+
+                    print(f"[CIPHERED] {ciphertext}")
 
                     if group not in state.groups:
                         await websocket.send(json.dumps({
@@ -154,7 +177,7 @@ async def handle_client(websocket):
                         }))
                         continue
 
-                    state.add_message(group, username, text)
+                    state.add_message(group, username, ciphertext)
 
                     # broadcast to everyone, except the sender
                     for member in state.groups.get(group, set()):
@@ -163,7 +186,8 @@ async def handle_client(websocket):
                                 "type": "message",
                                 "group": group,
                                 "username": username,
-                                "text": text
+                                "nonce": data["nonce"],
+                                "ciphertext": ciphertext
                             }))
 
             except Exception as e:
@@ -177,6 +201,7 @@ async def handle_client(websocket):
         if username:
             state.unregister_client(username)
             print(f"[SERVER] '{username}' disconnected")
+
 
 async def main():
 
