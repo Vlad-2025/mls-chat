@@ -3,6 +3,9 @@ import os
 import websockets as ws
 import sys
 import asyncio
+
+from  ClientState import ClientState
+
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 
@@ -12,17 +15,6 @@ if sys.platform == "win32":
 HOST = "127.0.0.1"
 PORT = 4444
 BUFFER_SIZE = 1024
-
-class ClientState:
-    def __init__(self):
-        self.username: str = ""
-        self.current_group: str = ""
-
-    def set_username(self, username):
-        self.username = username
-
-    def switch_group(self, group_name):
-        self.current_group = group_name
 
 state = ClientState()
 
