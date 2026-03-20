@@ -48,20 +48,40 @@ async def process_command(websocket, text):
             }))
 
     elif cmd == "leave":
-        await websocket.send(json.dumps({"type": "cmd", "cmd": "leave_group", "args": [state.current_group]}))
+        await websocket.send(json.dumps({
+            "type": "cmd",
+            "cmd": "leave_group",
+            "args": [state.current_group]
+        }))
         state.switch_group("")
 
     elif cmd == "create" and args:
-        await websocket.send(json.dumps({"type": "cmd", "cmd": "create_group", "args": args}))
+        await websocket.send(json.dumps({
+            "type": "cmd",
+            "cmd": "create_group",
+            "args": args
+        }))
 
     elif cmd == "delete" and args:
-        await websocket.send(json.dumps({"type": "cmd", "cmd": "delete_group", "args": args}))
+        await websocket.send(json.dumps({
+            "type": "cmd",
+            "cmd": "delete_group",
+            "args": args
+        }))
 
     elif cmd == "groups":
-        await websocket.send(json.dumps({"type": "cmd", "cmd": "list_groups", "args": []}))
+        await websocket.send(json.dumps({
+            "type": "cmd",
+            "cmd": "list_groups",
+            "args": []
+        }))
 
     elif cmd == "members":
-        await websocket.send(json.dumps({"type": "cmd", "cmd": "get_members", "args": [state.current_group]}))
+        await websocket.send(json.dumps({
+            "type": "cmd",
+            "cmd": "get_members",
+            "args": [state.current_group]
+        }))
 
     elif cmd == "invite" and args:
         if not state.current_group:
@@ -241,6 +261,8 @@ def decrypt_message(key:bytes, nonce_b64: str, ciphertext_b64: str, group: str, 
     aad = f"{group}:{username}".encode()
 
     return aesgcm.decrypt(nonce, ciphertext, aad).decode()
+
+# Main
 
 async def main():
     async with ws.connect(f"ws://{HOST}:{PORT}") as websocket:
