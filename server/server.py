@@ -22,9 +22,16 @@ async def process_command(websocket, username, cmd, args):
             state.join_group(username, args[0])
             history = state.get_history(args[0])
 
-            return {"type": "history", "group": args[0], "messages": history}
+            return {
+                "type": "history",
+                "group": args[0],
+                "messages": history
+            }
 
-        return {"type": "response", "text": state.create_group(args[0])}
+        return {
+            "type": "response",
+            "text": state.create_group(args[0])
+        }
 
     elif cmd == "delete_group":
         # kick everyone out first
@@ -40,16 +47,26 @@ async def process_command(websocket, username, cmd, args):
                     "text": f"Group '{args[0]}' was deleted"
                 }))
 
-        return {"type": "response", "text": result}
+        return {
+            "type": "response",
+            "text": result
+        }
 
     elif cmd == "join_group":
         result = state.join_group(username, args[0])
 
         if result == "Group not found":
-            return {"type": "error", "text": result}
+            return {
+                "type": "error",
+                "text": result
+            }
 
         history = state.get_history(args[0])
-        return {"type": "history", "group": args[0], "messages": history}
+        return {
+            "type": "history",
+            "group": args[0],
+            "messages": history
+        }
 
     elif cmd == "invite_user":
 
@@ -57,7 +74,10 @@ async def process_command(websocket, username, cmd, args):
         group = args[0] if args else None
 
         if not group or not invitee:
-            return {"type": "error", "text": "Usage: /invite <user> (while in a group)"}
+            return {
+                "type": "error",
+                "text": "Usage: /invite <user> (while in a group)"
+            }
 
         result = state.invite_user(username, invitee, group)
         if result.startswith("Invited"):
@@ -69,13 +89,19 @@ async def process_command(websocket, username, cmd, args):
                     "from": username,
                     "text": f"'{username}' invited you to join '{group}'. Do /accept <group> to become a member"
                 }))
-        return {"type": "response", "text": result}
+        return {
+            "type": "response",
+            "text": result
+        }
 
     elif cmd == "accept_invite":
 
         group = args[0] if args else None
         if not group:
-            return {"type": "error", "text": "Usage: /accept <group>"}
+            return {
+                "type": "error",
+                "text": "Usage: /accept <group>"
+            }
 
         result = state.accept_invite(username, group)
         if result.startswith("Joined"):
@@ -88,31 +114,52 @@ async def process_command(websocket, username, cmd, args):
                         "group": group
                     }))
             history = state.get_history(group)
-            return {"type": "history", "group": group, "messages": history}
+            return {
+                "type": "history",
+                "group": group, "messages": history
+            }
 
-        return {"type": "error", "text": result}
+        return {
+            "type": "error",
+            "text": result
+        }
 
     elif cmd == "get_pending":
 
         group = args[0] if args else None
         if not group:
-            return {"type": "error", "text": "Usage: /pending (while in a group)"}
+            return {
+                "type": "error",
+                "text": "Usage: /pending (while in a group)"
+            }
 
         result = state.get_pending(username, group)
         if isinstance(result, str):
-            return {"type": "error", "text": result}
+            return {
+                "type": "error",
+                "text": result
+            }
 
-        return {"type": "response", "text": f"Pending: {result}" if result else "No pending invites"}
+        return {
+            "type": "response",
+            "text": f"Pending: {result}" if result else "No pending invites"
+        }
 
 
     elif cmd == "leave_group":
-        return {"type": "response", "text": state.leave_group(username, args[0])}
+        return {
+            "type": "response",
+            "text": state.leave_group(username, args[0])
+        }
 
     elif cmd == "list_groups":
-        return {"type": "response", "text": str(state.list_groups())}
+        return {
+            "type": "response",
+            "text": str(state.list_groups())
+        }
 
     elif cmd == "get_members":
-        members = state.get_members(websocket, args[0])
+        members = state.get_members(args[0])
         return {
             "type": "members",
             "group": args[0],
@@ -132,7 +179,10 @@ async def process_command(websocket, username, cmd, args):
             **state.key_packages[target]    # dictionary unpacking
         }
 
-    return {"type": "error", "text": "Unknown command"}
+    return {
+        "type": "error",
+        "text": "Unknown command"
+    }
 
 async def handle_client(websocket):
 
@@ -155,7 +205,10 @@ async def handle_client(websocket):
                     state.register_client(username, websocket, x25519_pub, ed25519_pub)
                     print(f"[SERVER] '{username}' registered from {addr}")
 
-                    await websocket.send(json.dumps({"type": "response", "text": f"Welcome, {username}!"}))
+                    await websocket.send(json.dumps({
+                        "type": "response",
+                        "text": f"Welcome, {username}!"
+                    }))
 
                 elif msg_type == "cmd":
                     if not username:

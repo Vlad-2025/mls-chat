@@ -72,7 +72,7 @@ class ServerState:
     def get_history(self, group_name):
         return self.history.get(group_name, [])
 
-    def get_members(self, websocket, group_name):
+    def get_members(self, group_name):
         return list(self.groups.get(group_name, []))
 
     def list_groups(self):
