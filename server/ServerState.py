@@ -66,6 +66,17 @@ class ServerState:
 
         return f"Left '{group_name}' as '{username}'"
 
+    def kick_member(self, group_name, username, reason="unspecified"):
+        if group_name not in self.groups:
+            return "Group not found"
+
+        if username not in self.groups[group_name]:
+            return f"User '{username}' not found in '{group_name}'"
+
+        self.groups[group_name].discard(username)
+
+        return f"Kicked '{username}' from '{group_name}' for '{reason}'"
+
     def add_message(self, group_name, username, text):
         self.history[group_name].append({"username": username, "text": text})
 

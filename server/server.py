@@ -152,6 +152,35 @@ async def process_command(websocket, username, cmd, args):
             "text": state.leave_group(username, args[0])
         }
 
+    elif cmd == "kick_member":
+
+        # /kick username reason -> returns args: [group, username, reason]
+
+        group       = args[0]   if args else None
+        username    = args[1]   if args[1] else None
+        reason      = args[2]   if args[2] else None
+
+        if not group or not username:
+            return{
+                "type": "error",
+                "text": "Usage: /kick <user> ...reason (while in a group)"
+            }
+
+        result = state.kick_member(group, username, reason)
+        if result.startswith("Kicked"):
+            # notify the person being kicked
+            if username in state.clients:
+                await state.clients[username].send(json.dumps({
+                    "type": "kicked_from_group",
+                    "group": group,
+                    "text": f"You have been kicked from '{group}' for '{reason}'"
+                }))
+
+        return {
+            "type": "response",
+            "text": result
+        }
+
     elif cmd == "list_groups":
         return {
             "type": "response",

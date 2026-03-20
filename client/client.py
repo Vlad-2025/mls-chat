@@ -112,6 +112,21 @@ async def process_command(websocket, text):
             "args": [state.current_group]
         }))
 
+    # /kick username reason -> group is inferred
+    elif cmd == "kick" and len(args) >= 1:
+        if not state.current_group:
+            print("You are not currently in a group")
+            return
+
+        username = args[0]
+        reason = args[1] if len(args) == 2 else None
+
+        await websocket.send(json.dumps({
+            "type": "cmd",
+            "cmd": "kick_member",
+            "args": [state.current_group, username, reason]
+        }))
+
     else:
         print(f"Unknown command: {cmd}")
 
