@@ -346,6 +346,52 @@ class Member:
 
         return self.commit(forced=forced)
 
+    def add(self, new_idx, new_id_pub):
+        new_leaf = self.tree.leaf(new_idx)
+        leaf_sec = os.urandom(32)
+        self.tree.nodes[new_leaf].set_secret(leaf_sec)
+
+        # Blank parents above new leaf
+        j = new_leaf
+        while True:
+            pp = self.tree.parent(j)
+            if pp is None:
+                break
+
+            self.tree.nodes[pp].clear()
+
+            j = pp
+
+        # pre-scan again
+        forced = {}
+
+        i = self.li
+
+        while True:
+            p = self.tree.parent(i)
+            if p is None:
+                break
+
+            if self.tree.derive_parent(self.tree.left(p), self.tree.right(p)) is None:
+                forced[p] = os.urandom(32)
+
+            i = p
+
+        c = self.commit(forced=forced)
+
+        payload = json.dumps({
+            "idx": new_idx,
+            "lsec": leaf_sec.hex(),
+            "root": self.root.hex(),
+            "snap": c["snap"]
+        }).encode()
+
+        welcome = {
+            "pkg": ecdh_encrpyt(payload, new_id_pub)
+        }
+
+        return c, welcome
+
     # In case you just want to update the key
     def key_update(self):
         return self.commit()
