@@ -249,6 +249,8 @@ async def handle_client(websocket):
                 elif msg_type == "message":
                     group = data["group"]
                     ciphertext = data.get("ciphertext", "")
+                    nonce = data["nonce"]
+                    epoch = data.get("epoch", 0)
 
                     print(f"[CIPHERED] {ciphertext}")
 
@@ -259,7 +261,7 @@ async def handle_client(websocket):
                         }))
                         continue
 
-                    state.add_message(group, username, ciphertext)
+                    state.add_message(group, username, nonce, ciphertext, epoch)
 
                     # broadcast to everyone, except the sender
                     for member in state.groups.get(group, set()):
@@ -271,6 +273,22 @@ async def handle_client(websocket):
                                 "nonce": data["nonce"],
                                 "ciphertext": ciphertext
                             }))
+
+                # the server forwards the data without looking at it, because it cant
+
+                elif msg_type == "treekem_commit":
+                    group = data.get("group")
+                    if not group:
+                        continue
+
+                    for member in state.groups.get(group, set()):
+                        if member != username and member in state.clients:  # notify members
+                            await state.clients[member].send(json.dumps(data))
+
+                elif msg_type == "treekem_welcome":
+                    target = data.get("to")
+                    if target and target in state.clients:  # send welcome package to new member
+                        await state.clients[target].send(json.dumps(data))
 
             except Exception as e:
                 print(f"[SERVER] error: {str(e)}")
