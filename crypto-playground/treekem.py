@@ -1,4 +1,6 @@
 import os, json
+from mimetypes import inited
+
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes, serialization
@@ -55,6 +57,30 @@ class Tree:
         # return the child of the parent of i that isnt 'i' (so if 'i' was left, it return right(p))
         return self.right(p) if self.left(p) == i else self.left(p)
 
+    def leaves_in_subtree(self, i):
+        """All leaf indices inside subtree at i"""
+        if self.is_leaf(i):
+            return [i]
+
+        return self.leaves_in_subtree(self.left(i)) + self.leaves_in_subtree(self.right(i))
+
+    def derive_parent(self, ln, rn):
+        """
+        parent_secret = HKDF(ECDH(priv_left, pub_right))
+        works based on which side has the private key (it's symmetric)
+        -> each node can compute the parent secret independently
+        """
+        if ln.priv and rn.pub:
+            raw = ln.priv.exchange(rn.pub)
+
+        elif rn.priv and ln.pub:
+            raw = rn.priv.exchange(ln.pub)
+
+        else:
+            return None  # in order to handle blank subtrees
+
+        return hkdf(raw, info=b'parent')
+
     '''
     Resolution:
 
@@ -105,6 +131,22 @@ class Tree:
             i = int(ks)
             self.nodes[i].set_pub(pub_from_bytes(bytes.fromhex(ph)))
 
+    def blank_path(self, member_idx):
+
+        i = self.leaf(member_idx)
+
+        self.nodes[i].clear()
+
+        while True:
+            p = self.parent(i)
+
+            if p is None:
+                break
+
+            self.nodes[p].clear()
+
+            i = p
+
 '''
 
 a node can be in three states:
@@ -138,6 +180,176 @@ class Node:
         self.blank = True
 
 
+class Member:
+    def __init__(self, name, idx, n=4):
+        self.name = name
+        self.idx = idx
+        self.tree = Tree(n)
+        self.root = None
+
+        # long-term identity keypair, used for 'Welcome' encryption
+        self.id_priv, self.id_pub = generate_keypair()
+
+    @property
+    # leaf index -> helper function
+    def li(self):
+        return self.tree.leaf(self.idx)
+
+    def init_leaf(self):
+        self.tree.nodes[self.li].set_secret(os.urandom(32))
+
+    # The commit builder
+
+    def commit(self, forced=None):
+
+        forced = forced or {}
+
+        # 1) fresh leaf
+        self.init_leaf()
+
+        entries = []
+        i = self.li
+
+        while True:
+            p = self.tree.parent(i)
+
+            if p is None:
+                break
+
+            l, r = self.tree.left(p), self.tree.right(p)
+            sib = self.tree.sibling(i)  # the subtree we need to send the secret to
+
+            # 2) derive the parent secret
+            if p in forced:
+                p_secret = forced[p]
+
+                self.tree.nodes[p].set_secret(p_secret)
+
+            else:
+                p_secret = self.tree.derive_parent(l ,r)
+
+                assert p_secret is not None, f"Cannot derive-node {p}"
+
+                self.tree.nodes[p].set_secret(p_secret)
+
+            # 3) encrypt to sibling resolution
+            sib_res = self.tree.resolution(sib)
+
+            for rn in sib_res:
+                pub = self.tree.nodes[rn].pub
+                pkg = ecdh_encrpyt(p_secret, pub)
+
+                entries.append({
+                    "recipient": rn,    # node index, who can decrypt this
+                    "level": p,         # which tree nodes this secret belongs to
+                    "pkg": pkg
+                })
+                '''
+                Each entry in the commit says: "node 'rn' can decrypt this and needs to store
+                it as the secret for node 'p'"
+                '''
+
+            if p in forced:
+                our_side = [x for x in self.tree.leaves_in_subtree(i)
+                            if x != self.li and not self.tree.nodes[x].blank]
+                for rn in our_side:
+                    entries.append({
+                        "recipient": rn,
+                        "level": p,
+                        "pkg": ecdh_encrpyt(p_secret, self.tree.nodes[rn].pub)
+                    })
+                '''
+                When this parent's secret was forced (couldnt derive via ECDH because the
+                sibling subtree was blank), members on our side of the tree also cannot derive
+                this secret by going up -> they will hit the blank node too
+                
+                -> encrypt this secret directly to each surviving leaf on our side 
+                (all in the subtree except us)
+                '''
+
+            # move up the path
+            i = p
+
+        self.root = self.tree.nodes[0].secret
+
+        return {
+            "from": self.idx,
+            "leaf_pub": pub_bytes(self.tree.nodes[self.li].pub).hex(),
+            "entries": entries,
+            "snap": self.tree.snapshot()
+        }
+
+    def recv(self, c, removed_idx=None):
+        # If this is a remove commit, blank the removed member first
+        if removed_idx is not None:
+            self.tree.blank_path(removed_idx)
+
+        # Update commmiter's new leaf pub
+        cl = self.tree.leaf(c["from"])
+        if cl != self.li:
+            self.tree.nodes[cl].set_pub(pub_from_bytes(bytes.fromhex(c["leaf_pub"])))
+
+        # Refresh all PUBLIC keys from the snapshot
+        self.tree.apply_snap(c["snap"])
+
+        # Find the one we can decrypt
+        for entry in sorted(c["entries"], key=lambda e : e["level"]):
+            rn = entry["recipient"]
+            nd = self.tree.nodes[rn]
+
+            if nd.priv is None:
+                continue    # not ours
+
+            p_secret = ecdh_decrypt(entry["pkg"], nd.priv)
+            level_node = entry["level"]
+            self.tree.nodes[level_node].set_secret(p_secret)
+
+            # Derive upward from form level_node to root:
+            j = level_node
+            while True:
+                pp = self.tree.parent(j)
+                if pp is None:
+                    break
+
+                s = self.tree.derive_parent(self.tree.left(pp), self.tree.right(pp))
+                if s is None:
+                    break
+
+                self.tree.nodes[pp].set_secret(s)
+
+                # move up the tree
+                j = pp
+
+            self.root = self.tree.nodes[0].secret
+            return  # one entry is all we need
+
+        raise RuntimeError(f"[{self.name}] nothing to decrypt in commit")
+
+    def remove(self, removed_idx):
+        self.tree.blank_path(removed_idx)
+
+        # pre-scan: find which parents cant be derived on our path
+        forced = {}
+        i = self.li
+
+        while True:
+            p = self.tree.parent(i)
+            if p is None:
+                break
+
+            l, r = self.tree.left(p), self.tree.right(p)
+
+            if self.tree.derive_parent(l, r) is None:
+                forced[p] = os.urandom(32)
+
+            i = p
+
+        return self.commit(forced=forced)
+
+    # In case you just want to update the key
+    def key_update(self):
+        return self.commit()
+
 # Crypto
 
 def hkdf(ikm, info=b'treekem', length = 32):
@@ -158,28 +370,15 @@ def keypair_from_secret(secret):
 
     return priv, priv.public_key()
 
+def generate_keypair():
+    priv = X25519PrivateKey.generate()
+    return priv, priv.public_key()
+
 def pub_bytes(pub):
     return pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
 def pub_from_bytes(b):
     return X25519PublicKey.from_public_bytes(b)
-
-def derive_parent(ln:Node, rn:Node):
-    """
-    parent_secret = HKDF(ECDH(priv_left, pub_right))
-    works based on which side has the private key (it's symmetric)
-    -> each node can compute the parent secret independently
-    """
-    if ln.priv and rn.pub:
-        raw = ln.priv.exchange(rn.pub)
-
-    elif rn.priv and ln.pub:
-        raw = rn.priv.exchange(ln.pub)
-
-    else:
-        return None # in order to handle blank subtrees
-
-    return hkdf(raw, info=b'parent')
 
 def ecdh_encrpyt(plaintext, recipient_pub):
     eph_priv = X25519PrivateKey.generate()
