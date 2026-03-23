@@ -129,7 +129,4 @@ class ServerState:
         if group_name not in self.groups:
             return "Group not found"
 
-        if username not in self.groups[group_name]:
-            return "You are not part of this group"
-
         return list(self.pending.get(group_name, set()))

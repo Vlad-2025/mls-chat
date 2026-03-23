@@ -131,11 +131,6 @@ async def process_command(websocket, username, cmd, args):
         group = args[0] if args else None
 
         result = state.get_pending(username, group)
-        if isinstance(result, str):
-            return {
-                "type": "error",
-                "text": result
-            }
 
         return {
             "type": "response",
