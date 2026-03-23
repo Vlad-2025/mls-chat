@@ -80,9 +80,9 @@ class ServerState:
     def add_message(self, group_name, username, nonce, ciphertext, epoch=0):
         self.history[group_name].append({
             "username": username,
-            "nonce": nonce,
-            "text": ciphertext, # keeping it 'text' because i dont want to change the rest :P
-            "epoch": epoch
+            "nonce":    nonce,
+            "text":     ciphertext, # keeping it 'text' because i dont want to change the rest :P
+            "epoch":    epoch
         })
 
     def get_history(self, group_name):

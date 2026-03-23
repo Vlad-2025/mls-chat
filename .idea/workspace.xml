@@ -7,6 +7,8 @@
     <list default="true" id="1a1c273f-5a8f-4c27-8b8c-91242d0b0a11" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/client/ClientState.py" beforeDir="false" afterPath="$PROJECT_DIR$/client/ClientState.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/client/client.py" beforeDir="false" afterPath="$PROJECT_DIR$/client/client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crypto-playground/treekem.py" beforeDir="false" afterPath="$PROJECT_DIR$/client/treekem.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/server/ServerState.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/ServerState.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/server/server.py" beforeDir="false" afterPath="$PROJECT_DIR$/server/server.py" afterDir="false" />
     </list>
@@ -59,6 +61,11 @@
     &quot;last_opened_file_path&quot;: &quot;E:/PYCharm/mls-chat/client/client.py&quot;
   }
 }</component>
+  <component name="RecentsManager">
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="E:\PYCharm\mls-chat\client" />
+    </key>
+  </component>
   <component name="RunManager" selected="Python.client">
     <configuration name="client" type="PythonConfigurationType" factoryName="Python" singleton="false" nameIsGenerated="true">
       <module name="mls-chat" />

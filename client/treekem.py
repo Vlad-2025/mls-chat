@@ -70,6 +70,9 @@ class Tree:
         works based on which side has the private key (it's symmetric)
         -> each node can compute the parent secret independently
         """
+
+        ln, rn = self.nodes[ln], self.nodes[rn]
+
         if ln.priv and rn.pub:
             raw = ln.priv.exchange(rn.pub)
 
@@ -102,7 +105,7 @@ class Tree:
     def resolution(self, i):
         nd = self.nodes[i]
 
-        if nd.blank:
+        if nd.blank or nd.pub is None:
             if self.is_leaf(i):
                 return []
 
@@ -127,7 +130,7 @@ class Tree:
         }
 
     def apply_snap(self, snap):
-        for ks, ph in snap.items:
+        for ks, ph in snap.items():
             i = int(ks)
             self.nodes[i].set_pub(pub_from_bytes(bytes.fromhex(ph)))
 
@@ -164,7 +167,7 @@ class Node:
         self.blank  = False # True when member was removed
 
     def set_secret(self, s):
-        self.secret = 0
+        self.secret = s
         self.priv, self.pub = keypair_from_secret(s)
         self.blank = False
 
@@ -228,7 +231,12 @@ class Member:
             else:
                 p_secret = self.tree.derive_parent(l ,r)
 
-                assert p_secret is not None, f"Cannot derive-node {p}"
+                #assert p_secret is not None, f"Cannot derive-node {p}"
+                if p_secret is None:
+                    # sibling subtree has no key material
+                    # -> needs to be treated like a forced secret
+                    p_secret = os.urandom(32)
+                    forced[p] = p_secret
 
                 self.tree.nodes[p].set_secret(p_secret)
 
@@ -237,7 +245,7 @@ class Member:
 
             for rn in sib_res:
                 pub = self.tree.nodes[rn].pub
-                pkg = ecdh_encrpyt(p_secret, pub)
+                pkg = ecdh_encrypt(p_secret, pub)
 
                 entries.append({
                     "recipient": rn,    # node index, who can decrypt this
@@ -251,12 +259,14 @@ class Member:
 
             if p in forced:
                 our_side = [x for x in self.tree.leaves_in_subtree(i)
-                            if x != self.li and not self.tree.nodes[x].blank]
+                            if x != self.li
+                            and not self.tree.nodes[x].blank
+                            and self.tree.nodes[x].pub is not None]
                 for rn in our_side:
                     entries.append({
                         "recipient": rn,
                         "level": p,
-                        "pkg": ecdh_encrpyt(p_secret, self.tree.nodes[rn].pub)
+                        "pkg": ecdh_encrypt(p_secret, self.tree.nodes[rn].pub)
                     })
                 '''
                 When this parent's secret was forced (couldnt derive via ECDH because the
@@ -387,10 +397,23 @@ class Member:
         }).encode()
 
         welcome = {
-            "pkg": ecdh_encrpyt(payload, new_id_pub)
+            "pkg": ecdh_encrypt(payload, new_id_pub)
         }
 
         return c, welcome
+
+    @classmethod
+    def from_welcome(cls, name, idx, id_priv, welcome, n=4):
+        pl = json.loads(ecdh_decrypt(welcome["pkg"], id_priv))
+        m = cls(name, idx, n)
+        m.id_priv = id_priv
+        m.id_pub = id_priv.public_key()
+        m.tree.nodes[m.li].set_secret(bytes.fromhex(pl["lsec"]))
+        m.tree.apply_snap(pl["snap"])
+        m.root = bytes.fromhex(pl["root"])
+        m.tree.nodes[0].set_secret(m.root)
+        print(f"[{name}] joined, root = {m.root.hex()[:20]}...")
+        return m
 
     # In case you just want to update the key
     def key_update(self):
@@ -426,7 +449,7 @@ def pub_bytes(pub):
 def pub_from_bytes(b):
     return X25519PublicKey.from_public_bytes(b)
 
-def ecdh_encrpyt(plaintext, recipient_pub):
+def ecdh_encrypt(plaintext, recipient_pub):
     eph_priv = X25519PrivateKey.generate()
     eph_pub = eph_priv.public_key()
 

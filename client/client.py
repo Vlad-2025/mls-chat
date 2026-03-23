@@ -10,7 +10,8 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey, X2
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from  ClientState import ClientState
+from ClientState import ClientState
+from treekem import pub_bytes as treekem_pub_bytes, pub_from_bytes as treekem_pub_from_bytes
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -39,7 +40,7 @@ async def process_command(websocket, text):
     '''
 
     if cmd == "switch" and args:
-        os.system('cls')
+        os.system('cls' if sys.platform == "win32" else "clear")
         await websocket.send(json.dumps({
             "type": "cmd",
             "cmd": "join_group",
@@ -47,6 +48,11 @@ async def process_command(websocket, text):
             }))
 
     elif cmd == "leave":
+
+        if not state.current_group:
+            print("You are not part of a group")
+            return
+
         await websocket.send(json.dumps({
             "type": "cmd",
             "cmd": "leave_group",
@@ -117,8 +123,8 @@ async def process_command(websocket, text):
             print("You are not currently in a group")
             return
 
-        username = args[0]
-        reason = args[1] if len(args) == 2 else None
+        username= args[0]
+        reason  = args[1] if len(args) == 2 else None
 
         await websocket.send(json.dumps({
             "type": "cmd",
@@ -127,7 +133,7 @@ async def process_command(websocket, text):
         }))
 
     else:
-        print(f"Unknown command: {cmd}")
+        print(f"Unknown command: '{cmd}'")
 
 async def receive_loop(websocket):
 
@@ -135,24 +141,64 @@ async def receive_loop(websocket):
         data = json.loads(raw)
 
         if data["type"] == "message":
-            key = state.group_keys.get(data["group"])
+
+            group   = data["group"]
+            key     = state.message_key_for(group)
+            epoch   = data.get("epoch", 0)
+            nonce   = data["nonce"]
+            our_epoch   = state.epoch_for(group)
+            username    = data["username"]
+
+            if epoch != our_epoch:
+                print(f"[WARN] epoch mismatch!")
+
             if not key:
-                print(f"{data['group']}>{data['username']}: [encrypted, no key :P]")
+                print(f"{group}>{username}: [encrypted, no key :P]")
                 continue
 
-            plaintext = decrypt_message(key, data["nonce"], data["ciphertext"], data["group"], data["username"])
-            print(f"{data['group']}>{data['username']}: {plaintext}")
+            plaintext = decrypt_message(
+                key,
+                nonce,
+                data["ciphertext"],
+                group,
+                username
+            )
+
+            print(f"{group}>{username}: {plaintext}")
 
         elif data["type"] == "history":
-            # only switch group on successful join
-            state.switch_group(data["group"])
+            group = data["group"]
+            state.switch_group(group)
+
+            if not state.in_group(group):
+                state.create_group_state(group)
+                print(f"[CRYPTO] Initialized tree for '{group}'")
+
             for msg in data["messages"]:
-                print(f"{data['group']}>{msg['username']}: {msg['text']}")
+                '''
+                need to fix the epoch stuff, it needs to be communicated per message
+                '''
+                key = state.message_key_for(group)
+                if key:
+                    try:
+                        plaintext = decrypt_message(
+                            key,
+                            msg["nonce"],
+                            msg["text"],
+                            group,
+                            msg["username"]
+                        )
+                        print(f"{group}>{msg['username']}: {plaintext}")
+
+                    except Exception:
+                        print(f"{group}>{msg['username']}: [undecryptable history]")
+                else:
+                    print(f"{group}>{msg['username']}: [no key for history]")
 
             await websocket.send(json.dumps({
                 "type": "cmd",
                 "cmd": "get_members",
-                "args": [data["group"]]
+                "args": [group]
             }))
 
         elif data["type"] == "members":
@@ -173,25 +219,115 @@ async def receive_loop(websocket):
                 "args": [data["username"]]
             }))
 
-        elif data["type"] in ("response", "error"):
-            print(f"[{data['type'].upper()}] {data['text']}")
+
+        elif data["type"] == "key_package":
+            new_user = data["username"]
+            pub_bytes = base64.b64decode(data["x25519_pub"])
+            state.known_peers[new_user] = pub_bytes
+
+            # derive the group key
+
+            group   = state.current_group
+            gs      = state.current_group_state()
+
+            if not gs:
+                # not in a group
+                continue
+
+            if gs.slot_of(new_user) is not None:
+                # already have a slot for this person
+                continue
+
+            if gs.member.idx != 0:
+                continue
+
+            new_slot = gs.assign_slot(new_user)
+            new_id_pub = treekem_pub_from_bytes(pub_bytes)
+
+            print(f"[CRYPTO] Adding '{new_user}' to tree slot at: '{new_slot}'")
+
+            commit_dict, welcome_dict = gs.member.add(
+                new_idx     = new_slot,
+                new_id_pub  = new_id_pub
+            )
+            gs.advance_epoch()
+
+            await websocket.send(json.dumps({
+                "type": "treekem_commit",
+                "group": group,
+                "epoch": gs.epoch,
+                "commit": commit_dict,
+                "added_user": new_user,
+                "added_slot": new_slot
+            }))
+
+            # send the Welcome message only to the new member
+            await websocket.send(json.dumps({
+                "type": "treekem_welcome",
+                "to": new_user,
+                "group": group,
+                "epoch": gs.epoch,
+                "slot": new_slot,
+                "welcome": welcome_dict,
+                "slot_map": {u: s for u, s in gs.user_slots.items()},
+                "next_slot": gs.next_slot
+            }))
+
+            print(f"[CRYPTO] Epoch advanced to {gs.epoch} after adding '{new_user}'")
+
+        elif data["type"] == "treekem_commit":
+            group = data["group"]
+            gs = state.groups.get(group)
+            if not gs:
+                continue
+
+            added_user = data.get("added_user")
+            added_slot = data.get("added_slot")
+            removed_slot = data.get("removed_slot")
+
+            # update slot map if the commit added someone
+            if added_user and added_slot is not None:
+                gs.slot_map[added_slot]     = added_user
+                gs.user_slots[added_user]   = added_slot
+                if added_slot >= gs.next_slot:
+                    gs._next_slot = added_slot + 1
+
+            try:
+                gs.member.recv(
+                    data["commit"],
+                    removed_idx=removed_slot
+                )
+                gs.epoch = data["epoch"]
+
+                print(f"[CRYPTO] Processed commit, current epoch: {gs.epoch}")
+            except Exception as e:
+                print(f"[CRYPTO] Failed to process commit: {e}")
+
+        elif data["type"] == "treekem_welcome":
+            group = data["group"]
+            if state.in_group(group):
+                # already in group -> ignore duplicate welcome
+                continue
+
+            gs = state.join_from_welcome(group, data)
+            print(f"[CRYPTO] Joined '{group}' via Welcome, epoch {gs.epoch}")
+
+            # set group as active if we are switching to it
+            if not state.current_group:
+                state.switch_group(group)
+
+        elif data["type"] == "invite":
+            print(f"[INVITE] {data['text']}")
 
         elif data["type"] == "kicked_from_group":
             print(f"[{data['type'].upper()}] {data['text']}")
             if state.current_group == data["group"]:
                 state.switch_group("")
+            state.groups.pop(data["group"], None)
 
-        elif data["type"] == "key_package":
-            pub_bytes = base64.b64decode(data["x25519_pub"])
-            state.known_peers[data["username"]] = pub_bytes
+        elif data["type"] in ("response", "error"):
+            print(f"[{data['type'].upper()}] {data['text']}")
 
-            # derive the group key
-            group_key = derive_group_key(state.x25519_priv, pub_bytes, state.current_group)
-            state.group_keys[state.current_group] = group_key
-            print(f"[CRYPTO] Group key established for: '{state.current_group}'")
-
-        elif data["type"] == "invite":
-            print(f"[INVITE] {data['text']}")
 
 async def input_loop(websocket, session):
 
@@ -215,26 +351,34 @@ async def input_loop(websocket, session):
         # check if it's a command
         if message.startswith("/"):
             await process_command(websocket, message)
+            continue
 
-        else:
-            if not state.current_group:
-                print("You are not currently in a group. Use '/join <group_name>' first")
-                continue
+        if not state.current_group:
+            print("You are not in a group. Use /create '<name>' or /switch '<name>'")
+            continue
 
-            key = state.group_keys.get(state.current_group)
-            if not key:
-                print("[CRYPTO] No key for this group")
-                continue
+        key     = state.message_key_for(state.current_group)
+        epoch   = state.epoch_for(state.current_group)
 
-            encrypted = encrypt_message(key, message, state.current_group, state.username)
+        if not key:
+            print("[CRYPTO] No key for this group yet - waiting for tree setup")
+            continue
 
-            await websocket.send(json.dumps({
-                "type": "message",
-                "group": state.current_group,
-                "username": state.username,
-                "nonce": encrypted["nonce"],
-                "ciphertext": encrypted["ciphertext"]
-            }))
+        encrypted = encrypt_message(
+            key,
+            message,
+            state.current_group,
+            state.username
+        )
+
+        await websocket.send(json.dumps({
+            "type":     "message",
+            "group":    state.current_group,
+            "username": state.username,
+            "epoch":    epoch,
+            "nonce":    encrypted["nonce"],
+            "ciphertext":   encrypted["ciphertext"]
+        }))
 
 # Crypto
 

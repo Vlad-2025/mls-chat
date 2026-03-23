@@ -17,8 +17,10 @@ state = ServerState()
 
 async def process_command(websocket, username, cmd, args):
     if cmd == "create_group":
+
         result = state.create_group(args[0])
         if result.startswith("Group '"):
+
             state.join_group(username, args[0])
             history = state.get_history(args[0])
 
@@ -30,7 +32,7 @@ async def process_command(websocket, username, cmd, args):
 
         return {
             "type": "response",
-            "text": state.create_group(args[0])
+            "text": result
         }
 
     elif cmd == "delete_group":
