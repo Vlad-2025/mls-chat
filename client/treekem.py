@@ -25,28 +25,29 @@ Indexes:
     left child of i     : 2i + 1
     right child of i    : 2i + 2
     leaves start at     : n - 1
-    
+
 '''
+
 
 class Tree:
     def __init__(self, n=4):
         self.n = n
-        self.nodes = [Node() for _ in range(2*n - 1)]
+        self.nodes = [Node() for _ in range(2 * n - 1)]
 
     def leaf(self, member_idx):
         return (self.n - 1) + member_idx
 
     def parent(self, i):
-        return None if i == 0 else (i - 1)//2
+        return None if i == 0 else (i - 1) // 2
 
     def left(self, i):
-        return 2*i + 1
+        return 2 * i + 1
 
     def right(self, i):
-        return 2*i + 2
+        return 2 * i + 2
 
     def is_leaf(self, i):
-        return i >= self.n-1
+        return i >= self.n - 1
 
     def sibling(self, i):
         if i == 0:
@@ -64,14 +65,12 @@ class Tree:
 
         return self.leaves_in_subtree(self.left(i)) + self.leaves_in_subtree(self.right(i))
 
-    def derive_parent(self, ln, rn):
+    def derive_parent(self, l, r):
         """
         parent_secret = HKDF(ECDH(priv_left, pub_right))
-        works based on which side has the private key (it's symmetric)
-        -> each node can compute the parent secret independently
+        l, r are node indices — we look up the nodes internally.
         """
-
-        ln, rn = self.nodes[ln], self.nodes[rn]
+        ln, rn = self.nodes[l], self.nodes[r]
 
         if ln.priv and rn.pub:
             raw = ln.priv.exchange(rn.pub)
@@ -93,18 +92,19 @@ class Tree:
 
     the resolution of the subtree ->    a set of the highest non-blank nodes that together cover all
                                         surviving members of that tree
-                                        
+
     For a complete tree with no removals, resolution(2) on the CD subtree returns [2], just the CD
     parent node, because it's not blank and covers C and D
-    
+
     After D is removed, resolution(2) returns [5] -> just C's leaf because node 2 is now blank and
     D's leaf is blank, so we only return C                                  
-    
+
     '''
 
     def resolution(self, i):
         nd = self.nodes[i]
 
+        # treat nodes with no key material as blank — they are unreachable
         if nd.blank or nd.pub is None:
             if self.is_leaf(i):
                 return []
@@ -112,18 +112,18 @@ class Tree:
             return (
                     self.resolution(self.left(i)) +
                     self.resolution(self.right(i))
-                    )
+            )
 
         return [i]
 
-
     '''
     The snapshot mechanism:
-    
+
     A tree node needs to shareable across members
     The snapshot is a dict of {node_index: public_key_hex} for every node with a public key
-    
+
     '''
+
     def snapshot(self):
         return {
             i: pub_bytes(node.pub).hex() for i, node in enumerate(self.nodes) if node.pub
@@ -150,6 +150,7 @@ class Tree:
 
             i = p
 
+
 '''
 
 a node can be in three states:
@@ -159,12 +160,13 @@ a node can be in three states:
 
 '''
 
+
 class Node:
     def __init__(self):
         self.secret = None  # 32 random bytes
-        self.priv   = None  # derived from secret deterministically
-        self.pub    = None  # derived from private
-        self.blank  = False # True when member was removed
+        self.priv = None  # derived from secret deterministically
+        self.pub = None  # derived from private
+        self.blank = False  # True when member was removed
 
     def set_secret(self, s):
         self.secret = s
@@ -229,14 +231,13 @@ class Member:
                 self.tree.nodes[p].set_secret(p_secret)
 
             else:
-                p_secret = self.tree.derive_parent(l ,r)
+                p_secret = self.tree.derive_parent(l, r)
 
-                #assert p_secret is not None, f"Cannot derive-node {p}"
                 if p_secret is None:
-                    # sibling subtree has no key material
-                    # -> needs to be treated like a forced secret
+                    # sibling subtree has no key material (sparse tree) —
+                    # treat like a forced secret and cover our own side too
                     p_secret = os.urandom(32)
-                    forced[p] = p_secret
+                    forced[p] = p_secret  # mark so own-side broadcast fires below
 
                 self.tree.nodes[p].set_secret(p_secret)
 
@@ -248,8 +249,8 @@ class Member:
                 pkg = ecdh_encrypt(p_secret, pub)
 
                 entries.append({
-                    "recipient": rn,    # node index, who can decrypt this
-                    "level": p,         # which tree nodes this secret belongs to
+                    "recipient": rn,  # node index, who can decrypt this
+                    "level": p,  # which tree nodes this secret belongs to
                     "pkg": pkg
                 })
                 '''
@@ -272,7 +273,7 @@ class Member:
                 When this parent's secret was forced (couldnt derive via ECDH because the
                 sibling subtree was blank), members on our side of the tree also cannot derive
                 this secret by going up -> they will hit the blank node too
-                
+
                 -> encrypt this secret directly to each surviving leaf on our side 
                 (all in the subtree except us)
                 '''
@@ -303,12 +304,12 @@ class Member:
         self.tree.apply_snap(c["snap"])
 
         # Find the one we can decrypt
-        for entry in sorted(c["entries"], key=lambda e : e["level"]):
+        for entry in sorted(c["entries"], key=lambda e: e["level"]):
             rn = entry["recipient"]
             nd = self.tree.nodes[rn]
 
             if nd.priv is None:
-                continue    # not ours
+                continue  # not ours
 
             p_secret = ecdh_decrypt(entry["pkg"], nd.priv)
             level_node = entry["level"]
@@ -419,9 +420,10 @@ class Member:
     def key_update(self):
         return self.commit()
 
+
 # Crypto
 
-def hkdf(ikm, info=b'treekem', length = 32):
+def hkdf(ikm, info=b'treekem', length=32):
     return HKDF(
         algorithm=hashes.SHA256(),
         length=length,
@@ -439,15 +441,19 @@ def keypair_from_secret(secret):
 
     return priv, priv.public_key()
 
+
 def generate_keypair():
     priv = X25519PrivateKey.generate()
     return priv, priv.public_key()
 
+
 def pub_bytes(pub):
     return pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
+
 def pub_from_bytes(b):
     return X25519PublicKey.from_public_bytes(b)
+
 
 def ecdh_encrypt(plaintext, recipient_pub):
     eph_priv = X25519PrivateKey.generate()
@@ -467,6 +473,7 @@ def ecdh_encrypt(plaintext, recipient_pub):
         "c": ct.hex()
     }
 
+
 def ecdh_decrypt(pkg, priv):
     epub = pub_from_bytes(bytes.fromhex(pkg["e"]))
     key = hkdf(priv.exchange(epub), info=b"ecdh-enc")
@@ -476,4 +483,3 @@ def ecdh_decrypt(pkg, priv):
         bytes.fromhex(pkg["c"]),
         None
     )
-

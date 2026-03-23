@@ -26,6 +26,7 @@ BUFFER_SIZE = 1024
 
 state = ClientState()
 
+
 async def process_command(websocket, text):
     parts = text.lstrip("/").split()
     cmd = parts[0]
@@ -33,7 +34,7 @@ async def process_command(websocket, text):
 
     '''
     DEPRECATED
-    
+
     if cmd == "join" and args:
     await websocket.send(json.dumps({"type": "cmd", "cmd": "join_group", "args": args}))
 
@@ -45,7 +46,7 @@ async def process_command(websocket, text):
             "type": "cmd",
             "cmd": "join_group",
             "args": args
-            }))
+        }))
 
     elif cmd == "leave":
 
@@ -61,6 +62,8 @@ async def process_command(websocket, text):
         state.switch_group("")
 
     elif cmd == "create" and args:
+        # mark as creator now, before the history response arrives asynchronously
+        state.created_groups.add(args[0])
         await websocket.send(json.dumps({
             "type": "cmd",
             "cmd": "create_group",
@@ -107,9 +110,6 @@ async def process_command(websocket, text):
         }))
 
     elif cmd == "pending":
-        if not state.current_group:
-            print("You are not currently in a group")
-            return
 
         await websocket.send(json.dumps({
             "type": "cmd",
@@ -123,8 +123,8 @@ async def process_command(websocket, text):
             print("You are not currently in a group")
             return
 
-        username= args[0]
-        reason  = args[1] if len(args) == 2 else None
+        username = args[0]
+        reason = args[1] if len(args) == 2 else None
 
         await websocket.send(json.dumps({
             "type": "cmd",
@@ -135,42 +135,44 @@ async def process_command(websocket, text):
     else:
         print(f"Unknown command: '{cmd}'")
 
-async def receive_loop(websocket):
 
+async def receive_loop(websocket):
     async for raw in websocket:
         data = json.loads(raw)
 
         if data["type"] == "message":
 
-            group   = data["group"]
-            key     = state.message_key_for(group)
-            epoch   = data.get("epoch", 0)
-            nonce   = data["nonce"]
-            our_epoch   = state.epoch_for(group)
-            username    = data["username"]
-
-            if epoch != our_epoch:
-                print(f"[WARN] epoch mismatch!")
+            group = data["group"]
+            key = state.message_key_for(group)
+            msg_epoch = data.get("epoch", 0)
+            nonce = data["nonce"]
+            our_epoch = state.epoch_for(group)
+            username = data["username"]
 
             if not key:
-                print(f"{group}>{username}: [encrypted, no key :P]")
+                print(f"{group}>{username}: [encrypted, no key]")
                 continue
 
-            plaintext = decrypt_message(
-                key,
-                nonce,
-                data["ciphertext"],
-                group,
-                username
-            )
-
-            print(f"{group}>{username}: {plaintext}")
+            # If epochs differ we try to decrypt anyway — commits and messages
+            # can arrive out of order so a mismatch doesn't always mean failure.
+            # Only print a warning if decryption actually fails.
+            try:
+                plaintext = decrypt_message(key, nonce, data["ciphertext"], group, username)
+                if msg_epoch != our_epoch:
+                    print(f"[WARN] {group}: decrypted message from epoch {msg_epoch} (ours: {our_epoch})")
+                print(f"{group}>{username}: {plaintext}")
+            except Exception:
+                print(f"{group}>{username}: [decrypt failed, epoch {msg_epoch} vs {our_epoch}]")
 
         elif data["type"] == "history":
             group = data["group"]
             state.switch_group(group)
 
-            if not state.in_group(group):
+            # Only bootstrap a creator tree if WE created this group.
+            # If we are a joiner, our tree comes from the Welcome message —
+            # calling create_group_state here would give us the wrong idx
+            # and wrong keys, and the Welcome guard would skip join_from_welcome.
+            if not state.in_group(group) and state.is_creator_of(group):
                 state.create_group_state(group)
                 print(f"[CRYPTO] Initialized tree for '{group}'")
 
@@ -227,8 +229,8 @@ async def receive_loop(websocket):
 
             # derive the group key
 
-            group   = state.current_group
-            gs      = state.current_group_state()
+            group = state.current_group
+            gs = state.current_group_state()
 
             if not gs:
                 # not in a group
@@ -238,6 +240,8 @@ async def receive_loop(websocket):
                 # already have a slot for this person
                 continue
 
+            # only the group creator (slot 0) runs Add commits
+            # the new joiner will get a Welcome message instead
             if gs.member.idx != 0:
                 continue
 
@@ -247,8 +251,8 @@ async def receive_loop(websocket):
             print(f"[CRYPTO] Adding '{new_user}' to tree slot at: '{new_slot}'")
 
             commit_dict, welcome_dict = gs.member.add(
-                new_idx     = new_slot,
-                new_id_pub  = new_id_pub
+                new_idx=new_slot,
+                new_id_pub=new_id_pub
             )
             gs.advance_epoch()
 
@@ -281,14 +285,18 @@ async def receive_loop(websocket):
             if not gs:
                 continue
 
+            # skip commits we sent ourselves — we already applied them
+            if data["commit"].get("from") == gs.member.idx:
+                continue
+
             added_user = data.get("added_user")
             added_slot = data.get("added_slot")
             removed_slot = data.get("removed_slot")
 
             # update slot map if the commit added someone
             if added_user and added_slot is not None:
-                gs.slot_map[added_slot]     = added_user
-                gs.user_slots[added_user]   = added_slot
+                gs.slot_map[added_slot] = added_user
+                gs.user_slots[added_user] = added_slot
                 if added_slot >= gs.next_slot:
                     gs._next_slot = added_slot + 1
 
@@ -330,7 +338,6 @@ async def receive_loop(websocket):
 
 
 async def input_loop(websocket, session):
-
     while True:
         # problem: prompt_async gets the current_group before /leave or /join work
         # message = await session.prompt_async(f"{state.current_group}>{state.username}> ")
@@ -357,8 +364,8 @@ async def input_loop(websocket, session):
             print("You are not in a group. Use /create '<name>' or /switch '<name>'")
             continue
 
-        key     = state.message_key_for(state.current_group)
-        epoch   = state.epoch_for(state.current_group)
+        key = state.message_key_for(state.current_group)
+        epoch = state.epoch_for(state.current_group)
 
         if not key:
             print("[CRYPTO] No key for this group yet - waiting for tree setup")
@@ -372,23 +379,25 @@ async def input_loop(websocket, session):
         )
 
         await websocket.send(json.dumps({
-            "type":     "message",
-            "group":    state.current_group,
+            "type": "message",
+            "group": state.current_group,
             "username": state.username,
-            "epoch":    epoch,
-            "nonce":    encrypted["nonce"],
-            "ciphertext":   encrypted["ciphertext"]
+            "epoch": epoch,
+            "nonce": encrypted["nonce"],
+            "ciphertext": encrypted["ciphertext"]
         }))
+
 
 # Crypto
 
 def serialize_pub(key):
     raw = key.public_bytes(
-        encoding = serialization.Encoding.Raw,
-        format = serialization.PublicFormat.Raw
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw
     )
 
-    return base64.b64encode(raw).decode()   # ?
+    return base64.b64encode(raw).decode()  # ?
+
 
 def derive_group_key(my_priv: X25519PrivateKey, their_pub_bytes: bytes, group_name: str) -> bytes:
     their_pub = X25519PublicKey.from_public_bytes(their_pub_bytes)
@@ -401,6 +410,7 @@ def derive_group_key(my_priv: X25519PrivateKey, their_pub_bytes: bytes, group_na
         info=f"mls-chat-group-{group_name}".encode()
     ).derive(shared_secret)
 
+
 def encrypt_message(key: bytes, plain_text: str, group: str, username: str) -> dict:
     aesgcm = AESGCM(key)
     nonce = os.urandom(12)
@@ -412,7 +422,8 @@ def encrypt_message(key: bytes, plain_text: str, group: str, username: str) -> d
         "ciphertext": base64.b64encode(ciphertext).decode()
     }
 
-def decrypt_message(key:bytes, nonce_b64: str, ciphertext_b64: str, group: str, username: str) -> str:
+
+def decrypt_message(key: bytes, nonce_b64: str, ciphertext_b64: str, group: str, username: str) -> str:
     aesgcm = AESGCM(key)
     nonce = base64.b64decode(nonce_b64)
     ciphertext = base64.b64decode(ciphertext_b64)
@@ -420,28 +431,29 @@ def decrypt_message(key:bytes, nonce_b64: str, ciphertext_b64: str, group: str, 
 
     return aesgcm.decrypt(nonce, ciphertext, aad).decode()
 
+
 # Main
 
 async def main():
     async with ws.connect(f"ws://{HOST}:{PORT}") as websocket:
-
         # register username on connect
         username = input("Enter username: ").strip() or "guest"
         state.set_username(username)
 
         await websocket.send(json.dumps({
             "type": "register",
-            "username":username,
+            "username": username,
             "x25519_pub": serialize_pub(state.x25519_pub),
             "ed25519_pub": serialize_pub(state.ed25519_pub)
         }))
 
-        with patch_stdout():    # for syncing received messages with text thats being written
+        with patch_stdout():  # for syncing received messages with text thats being written
             session = PromptSession()
             await asyncio.gather(
                 receive_loop(websocket),
                 input_loop(websocket, session),
             )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -129,11 +129,6 @@ async def process_command(websocket, username, cmd, args):
     elif cmd == "get_pending":
 
         group = args[0] if args else None
-        if not group:
-            return {
-                "type": "error",
-                "text": "Usage: /pending (while in a group)"
-            }
 
         result = state.get_pending(username, group)
         if isinstance(result, str):

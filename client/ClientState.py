@@ -47,7 +47,6 @@ class GroupState:
     def message_key(self):
         if self.member.root is None:
             return None
-
         return derive_message_key(self.member.root, self.group_name, self.epoch)
 
     def advance_epoch(self):
@@ -62,6 +61,10 @@ class ClientState:
     def __init__(self):
         self.username: str      = ""
         self.current_group: str = ""
+
+        # groups we created ourselves (so history handler knows to bootstrap
+        # a creator tree rather than waiting for a Welcome)
+        self._created_groups: set = set()
 
         # Crypto
 
@@ -107,11 +110,15 @@ class ClientState:
         member.init_leaf()
 
         gs = GroupState(group_name, member, epoch=0)
-        gs.assign_slot(self.username)   # cretor is always slot 0
+        gs.assign_slot(self.username)   # creator is always slot 0
 
         self.groups[group_name] = gs
+        self._created_groups.add(group_name)    # mark as creator
 
         return gs
+
+    def is_creator_of(self, group_name: str) -> bool:
+        return group_name in self._created_groups
 
     def join_from_welcome(self, group_name, welcome_payload):
         member = Member.from_welcome(
@@ -142,3 +149,7 @@ class ClientState:
         gs = self.groups.get(group_name)
 
         return gs.epoch if gs else 0
+
+    @property
+    def created_groups(self):
+        return self._created_groups
