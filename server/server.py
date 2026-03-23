@@ -267,6 +267,7 @@ async def handle_client(websocket):
                                 "type": "message",
                                 "group": group,
                                 "username": username,
+                                "epoch": epoch,
                                 "nonce": data["nonce"],
                                 "ciphertext": ciphertext
                             }))
