@@ -85,9 +85,12 @@ async def process_command(websocket, text):
         }))
 
     elif cmd == "members":
+
+        #print(f"Hello {state.current_group}")
+
         await websocket.send(json.dumps({
             "type": "cmd",
-            "cmd": "get_members",
+            "cmd": "list_members",
             "args": [state.current_group]
         }))
 
@@ -203,7 +206,12 @@ async def receive_loop(websocket):
                 "args": [group]
             }))
 
+        elif data["type"] == "members_list":
+            members_str = ", ".join(data["members"])
+            print(f"[INFO] Members in '{data['group']}': {members_str}")
+
         elif data["type"] == "members":
+            #print(f"[INFO] Members of '{data['group']}': {', '.join(data['members'])}")
             for member in data["members"]:
                 if member != state.username:
                     await websocket.send(json.dumps({

@@ -122,6 +122,7 @@ class ServerState:
 
         self.pending[group_name].discard(username)
         self.groups[group_name].add(username)
+        print(self.groups[group_name])
 
         return f"Joined '{group_name}'"
 

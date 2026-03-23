@@ -187,6 +187,14 @@ async def process_command(websocket, username, cmd, args):
             "members": members
         }
 
+    elif cmd == "list_members":
+        members = state.get_members(args[0])
+        return{
+            "type": "members_list",
+            "group": args[0],
+            "members": members
+        }
+
     elif cmd == "get_key_package":
         target = args[0] if args else None
         if not target or target not in state.key_packages:
