@@ -218,26 +218,27 @@ async def receive_loop(websocket):
                 state.create_group_state(group)
                 print(f"[CRYPTO] Initialized tree for '{group}'")
 
-            for msg in data["messages"]:
-                '''
-                need to fix the epoch stuff, it needs to be communicated per message
-                '''
-                key = state.message_key_for(group)
-                if key:
-                    try:
-                        plaintext = decrypt_message(
-                            key,
-                            msg["nonce"],
-                            msg["text"],
-                            group,
-                            msg["username"]
-                        )
-                        print(f"{group}>{msg['username']}: {plaintext}")
+            if not state.in_group(group):
+                for msg in data["messages"]:
+                    '''
+                    need to fix the epoch stuff, it needs to be communicated per message
+                    '''
+                    key = state.message_key_for(group)
+                    if key:
+                        try:
+                            plaintext = decrypt_message(
+                                key,
+                                msg["nonce"],
+                                msg["text"],
+                                group,
+                                msg["username"]
+                            )
+                            print(f"{group}>{msg['username']}: {plaintext}")
 
-                    except Exception:
-                        print(f"{group}>{msg['username']}: [undecryptable history]")
-                else:
-                    print(f"{group}>{msg['username']}: [no key for history]")
+                        except Exception:
+                            print(f"{group}>{msg['username']}: [undecryptable history]")
+                    else:
+                        print(f"{group}>{msg['username']}: [no key for history]")
 
             await websocket.send(json.dumps({
                 "type": "cmd",
