@@ -25,15 +25,26 @@ class GroupState:
         self.user_slots = {}    # username -> slot_index
 
         self._next_slot = 0
+        self._freed_slots = []
 
     def assign_slot(self, username):
-        slot = self._next_slot
-
-        self._next_slot += 1
+        if self._freed_slots:
+            slot = self._freed_slots.pop(0)
+        else:
+            slot = self._next_slot
+            self._next_slot += 1
 
         self.slot_map[slot] = username
-
         self.user_slots[username] = slot
+
+        return slot
+
+    def free_slot(self, username):
+        slot = self.user_slots.pop(username, None)
+
+        if slot is not None:
+            self.slot_map.pop(slot, None)
+            self._freed_slots.append(slot)
 
         return slot
 

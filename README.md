@@ -7,7 +7,7 @@
 - when connecting to the server, gets asked for a username, different from the ones already online
 
 # MLS
-- using TreeKEM (a group key management protocol which uses a binary key to facilitate secure key agreement among multiple members of a group)
+- using TreeKEM (a group key management protocol which uses a binary tree to facilitate secure key agreement among multiple members of a group)
 - max group limit as of right now, making it dynamic is a bit too much considering the scope of this project
 
 # E2EE

@@ -126,14 +126,44 @@ async def process_command(websocket, text):
             print("You are not currently in a group")
             return
 
-        username = args[0]
-        reason = args[1] if len(args) == 2 else None
+        gs = state.current_group_state()
+        if not gs or gs.member.idx != 0:
+            print("Only the group can kick members")
 
+        target = args[0]
+        reason = args[1] if len(args) >= 2 else None
+
+        kicked_slot = gs.slot_of(target)
+        if kicked_slot is None:
+            print(f"{target} is not in this group")
+            return
+
+        # 1) tell server to remove from membership
         await websocket.send(json.dumps({
             "type": "cmd",
             "cmd": "kick_member",
-            "args": [state.current_group, username, reason]
+            "args": [state.current_group, target, reason]
         }))
+
+        # 2) TreeKEM remove: blank the path, re-derive, commit
+        commit_dict = gs.member.remove(kicked_slot)
+        gs.advance_epoch()
+
+        # clean slot maps
+        gs.slot_map.pop(kicked_slot, None)
+        gs.user_slots.pop(target, None)
+
+        # 3) broadcast the remove commit to others to rotate keys
+        await websocket.send(json.dumps({
+            "type": "treekem_commit",
+            "group": state.current_group,
+            "epoch": gs.epoch,
+            "commit": commit_dict,
+            "removed_slot": kicked_slot,
+            "removed_user": target
+        }))
+
+        print(f"[CRYPTO] Removed '{target}' (slot {kicked_slot}), epoch -> {gs.epoch}")
 
     else:
         print(f"Unknown command: '{cmd}'")
@@ -297,9 +327,10 @@ async def receive_loop(websocket):
             if data["commit"].get("from") == gs.member.idx:
                 continue
 
-            added_user = data.get("added_user")
-            added_slot = data.get("added_slot")
-            removed_slot = data.get("removed_slot")
+            added_user      = data.get("added_user")
+            added_slot      = data.get("added_slot")
+            removed_slot    = data.get("removed_slot")
+            removed_user    = data.get("removed_user")
 
             # update slot map if the commit added someone
             if added_user and added_slot is not None:
@@ -307,6 +338,11 @@ async def receive_loop(websocket):
                 gs.user_slots[added_user] = added_slot
                 if added_slot >= gs.next_slot:
                     gs._next_slot = added_slot + 1
+
+            # update slot map for removes
+            if removed_user and removed_slot is not None:
+                gs.slot_map.pop(removed_slot, None)
+                gs.user_slots.pop(removed_user, None)
 
             try:
                 gs.member.recv(
