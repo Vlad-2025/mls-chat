@@ -16,6 +16,9 @@ class ServerState:
         # username -> {"x_pub": str, "ed_pub": str}
         self.key_packages: dict[str, dict] = {}
 
+        # group_name -> epoch
+        self.group_epoch: dict[str, any] = {}
+
     def register_client(self, username, websocket, x25519_pub, ed25519_pub):
         self.clients[username] = websocket
 
@@ -37,6 +40,9 @@ class ServerState:
         self.groups[group_name] = set()
         self.history[group_name] = []
         self.pending[group_name] = set()
+
+        self.group_epoch = getattr(self, 'group_epoch', {})
+        self.group_epoch[group_name] = 0
 
         return f"Group '{group_name}' created"
 

@@ -26,7 +26,6 @@ BUFFER_SIZE = 1024
 
 state = ClientState()
 
-
 async def process_command(websocket, text):
     parts = text.lstrip("/").split()
     cmd = parts[0]
@@ -182,6 +181,11 @@ async def receive_loop(websocket):
             our_epoch = state.epoch_for(group)
             username = data["username"]
 
+            if msg_epoch > our_epoch:
+                # future epoch, buffer it and retry after processing commit
+                state.pending_messages.setdefault(group, []).append(data)
+                continue
+
             if not key:
                 print(f"{group}>{username}: [encrypted, no key]")
                 continue
@@ -190,7 +194,12 @@ async def receive_loop(websocket):
             # can arrive out of order so a mismatch doesn't always mean failure.
             # Only print a warning if decryption actually fails.
             try:
-                plaintext = decrypt_message(key, nonce, data["ciphertext"], group, username)
+                plaintext = decrypt_message(
+                    key,
+                    nonce,
+                    data["ciphertext"],
+                    group,
+                    username)
                 if msg_epoch != our_epoch:
                     print(f"[WARN] {group}: decrypted message from epoch {msg_epoch} (ours: {our_epoch})")
                 print(f"{group}>{username}: {plaintext}")
@@ -352,6 +361,22 @@ async def receive_loop(websocket):
                 gs.epoch = data["epoch"]
 
                 print(f"[CRYPTO] Processed commit, current epoch: {gs.epoch}")
+
+                # clear the messages that arrived before this commit
+                buffered = state.pending_messages.pop(group, [])
+                for msg in buffered:
+                    key = state.message_key_for(group)
+                    try:
+                        plaintext = decrypt_message(
+                            key,
+                            msg["nonce"],
+                            msg["ciphertext"],
+                            group,
+                            msg["username"])
+                        print(f"{group}>{msg['username']}: {plaintext}")
+                    except Exception:
+                        print(f"{group}>{msg['username']}: [decrypt failed after reorder]")
+
             except Exception as e:
                 print(f"[CRYPTO] Failed to process commit: {e}")
 

@@ -77,6 +77,9 @@ class ClientState:
         # a creator tree rather than waiting for a Welcome)
         self._created_groups: set = set()
 
+        # group -> list of messages
+        self.pending_messages: dict[str, list] = {}
+
         # Crypto
 
         # Long-term identity keypair:

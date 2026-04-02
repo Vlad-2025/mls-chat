@@ -282,6 +282,9 @@ async def handle_client(websocket):
                     if not group:
                         continue
 
+                    # advance server epoch
+                    state.group_epoch[group] = data.get("epoch", 0)
+
                     for member in state.groups.get(group, set()):
                         if member != username and member in state.clients:  # notify members
                             await state.clients[member].send(json.dumps(data))
